@@ -1,29 +1,23 @@
-# README #
+# Populations of cells and diabetes
 
-This README would normally document whatever steps are necessary to get your application up and running.
+Detailed notes at https://docs.google.com/document/d/1CdOEOm-pe5ZUYJBfLKXbomp2DvEIbrHDdT6CzxYc52M/edit
 
-### What is this repository for? ###
+# Goals
 
-* Quick summary
-* Version
-* [Learn Markdown](https://bitbucket.org/tutorials/markdowndemo)
+Correlation of cell population abundance and treatment groups (control, patients at the time of diabetes diagnosis, patients 1 year after diagnosis.)
 
-### How do I get set up? ###
+### Internal contacts ###
 
-* Summary of set up
-* Configuration
-* Dependencies
-* Database configuration
-* How to run tests
-* Deployment instructions
+* Author: Martin Modrak
 
-### Contribution guidelines ###
+### External contacts ###
 
-* Writing tests
-* Code review
-* Other guidelines
+* Veronike Niederlová, Institute of Molecular Genetics - Czec Academy of Sciences (project lead)
+* Ondřel Štěpánek (PI)
+* prof. MUDr. Zdeněk Šumník, Ph.D., Pediatric Clinic (collaborator from 2. LF)
 
-### Who do I talk to? ###
+### Timeline ###
 
-* Repo owner or admin
-* Other community or team contact
+* Initial consultation 2024-02-22
+* Aim for paper submission in April/May 2024
+  
