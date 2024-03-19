@@ -1,0 +1,221 @@
+---
+title: "Diabetes"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(brms)
+library(bayesplot)
+options(mc.cores = 4, brms.backend = "cmdstanr")
+theme_set(theme_minimal())
+```
+
+
+```{r}
+cd4_all <-
+  read_csv(
+    here::here("private_data/all_levels_counts_cd4.csv"),
+    col_types = cols(
+      Sample_ID = col_character(),
+      annotations = col_character(),
+      n = col_integer(),
+      Condition = col_character(),
+      Condition2 = col_character(),
+      Disease = col_character(),
+      Sex = col_character(),
+      Age = col_double(),
+      Age_group = col_character(),
+      Patient_ID = col_integer(),
+      Time = col_character(),
+      Experiment_ID = col_character(),
+      Level = col_character()
+    )
+  ) %>%
+  separate(annotations, into = c("L1", "L2", "L3", "Marker_genes"), sep = "---|: ", fill = "right") %>%
+  mutate(Name = case_when(!is.na(L3) ~ L3,
+                          !is.na(L2) ~ L2,
+                          TRUE ~ L1))
+```
+
+
+```{r}
+cd4_all_prop <- cd4_all %>% 
+  group_by(Sample_ID, Level) %>%
+  mutate(sum_parent = if_else(Level == "L1", sum(n), NA_real_),
+         sum_all = sum(n)) %>%
+  group_by(Sample_ID, L1, Level) %>%
+  mutate(sum_parent = if_else(Level == "L2", sum(n), sum_parent)) %>%
+  group_by(Sample_ID, L1, L2, Level) %>%
+  mutate(sum_parent = if_else(Level == "L3", sum(n), sum_parent)) %>%
+  ungroup() %>%
+  mutate(prop_parent = n / sum_parent,
+         prop_all = n / sum_all,
+         parent_level = case_when(Level == "L1" ~ "All",
+                                  Level == "L2" ~ L1,
+                                  Level == "L3" ~ L2))
+
+stopifnot(all(!is.na(cd4_all_prop$sum_parent)))
+stopifnot(all(!is.na(cd4_all_prop$parent_level)))
+
+prop_sums_bad <- cd4_all_prop %>%
+  group_by(Sample_ID, Level, parent_level) %>%
+  summarise(prop_sum = sum(prop_parent), .groups = "drop") %>%
+  filter(abs(prop_sum - 1) > 1e-5)
+
+stopifnot(nrow(prop_sums_bad) == 0)
+
+sums_all_bad <- cd4_all_prop %>%
+  group_by(Sample_ID, sum_all) %>%
+  tally() %>%
+  group_by(Sample_ID) %>%
+  filter(n() > 1)
+
+stopifnot(nrow(sums_all_bad) == 0)
+
+
+```
+
+```{r}
+plot_prop <- function(all_prop, prop_col = prop_parent) {
+  all_prop %>%
+    filter(!is.na({{prop_col}})) %>%
+    ggplot(aes(x = Condition, y = {{prop_col}})) +
+    geom_point(position = position_jitter(width = 0.3, height = 0), alpha = 0.5, color = "darkgray") +
+    stat_summary(fun.data = "mean_se") +
+    facet_wrap(~Name, scales = "free_y")
+  
+}
+cd4_all_prop %>% filter(Level == "L1") %>% plot_prop()
+cd4_all_prop %>% filter(Level == "L2" & L2 != "Unconventional") %>% plot_prop()
+```
+
+
+```{r, fig.width=8, fig.height=8}
+cd4_all_prop %>% filter(Level == "L3") %>% plot_prop()
+```
+
+```{r}
+cd4_all_prop %>% filter(Level == "L1") %>% plot_prop(prop_all)
+cd4_all_prop %>% filter(Level == "L2" & L2 != "Unconventional") %>% plot_prop(prop_all)
+```
+
+```{r}
+cd4_all_prop %>% filter(Level == "L2" & L2 != "Unconventional") %>% 
+  
+```
+
+
+
+```{r, fig.width=8, fig.height=8}
+cd4_all_prop %>% filter(Level == "L3") %>% plot_prop(prop_all)
+```
+
+```{r}
+cd4_all_prop %>% filter(Name == "ISAGhi" & prop_parent > 0.1)
+```
+
+
+```{r}
+cd4_l3 <- cd4_all %>%
+  filter(Level == "L3") %>%
+  select(-Level) %>%
+  mutate()
+
+```
+
+
+```{r cells-per-sample, fig.cap="Distribution of cells per sample in the CD4 data"}
+cd4_l3 %>% group_by(Sample_ID) %>%
+  summarise(n_cells = sum(n)) %>%
+  ggplot(aes(n_cells)) + geom_histogram(binwidth = 100)
+```
+
+```{r}
+cd4_l3_for_model <- cd4_l3 %>% group_by(Sample_ID) %>%
+  mutate(n_all = sum(n), isT1 = as.numeric(Condition == "Dia T1"), isDia = as.numeric(Disease == "Dia"))
+
+fit_cd4 <- brm(bf(n ~ offset(-log(n_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
+                  shape ~ (1 | L3)), 
+               data = cd4_l3_for_model, 
+               family = negbinomial(),
+               file = here::here("stored_fits/cd4.rds"),
+               file_refit = "on_change")
+```
+
+```{r}
+make_stancode(bf(n ~ offset(-log(n_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
+                  shape ~ (1 | L3)), 
+               data = cd4_l3_for_model, 
+               family = negbinomial())
+
+make_standata(bf(n ~ offset(-log(n_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
+                  shape ~ (1 | L3)), 
+               data = cd4_l3_for_model, 
+               family = negbinomial())$offsets
+
+```
+
+
+```{r}
+fit_cd4
+```
+
+```{r}
+pp_check(fit_cd4, type = "loo_pit_overlay", nsamples = 50)
+```
+
+```{r}
+pred <- posterior_predict(fit_cd4)
+ppc_stat_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2, stat = "mean")
+ppc_stat_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2, stat = "sd")
+#ppc_bars_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2)
+```
+
+```{r}
+ppc_bars_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L3)
+```
+
+
+```{r}
+pred <- prepare_predictions(fit_cd4)
+pred_shape <- get_dpar(pred, "shape")
+hist(log(pred_shape))
+mean(pred_shape < 1)
+qnbinom(0.975, size = 0.5, mu = 30)
+```
+
+```{r}
+loo_cd4 <- loo(fit_cd4)
+```
+
+```{r}
+cd4_l3_for_model[loo_cd4$diagnostics$pareto_k > 0.5,] %>% filter(L2 == "ISAGhi")
+```
+
+```{r}
+fit_cd4_pois <- brm(bf(n ~ offset(-log(n_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3) + (1 | gr(Sample_ID_L3, by = L3))), 
+               data = cd4_l3_for_model %>% mutate(Sample_ID_L3 = paste0(Sample_ID, L3, sep = "_")), 
+               family = poisson(),
+               refresh = 100,
+               file = here::here("stored_fits/cd4_pois.rds"),
+               file_refit = "on_change")
+
+fit_cd4_pois
+```
+
+```{r}
+pp_check(fit_cd4_pois, type = "loo_pit_overlay", nsamples = 50)
+```
+
+```{r}
+pred <- posterior_predict(fit_cd4_pois)
+ppc_stat_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2, stat = "mean")
+ppc_stat_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2, stat = "sd")
+#ppc_bars_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2)
+```
+
+```{r}
+ppc_bars_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L3)
+```
