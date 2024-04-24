@@ -1,15 +1,26 @@
 ---
-title: "Diabetes"
-output: html_notebook
+title: "Bayes - Diabetes"
+output: 
+  word_document:
+    toc: false
+    reference_docx: "output_template.docx"
+    df_print: "kable"
+date: "Version `r format(Sys.time(), '%Y-%m-%d')`"
+
 ---
 
 
-```{r}
+```{r setup, echo=FALSE, include=FALSE}
 library(tidyverse)
 library(brms)
 library(bayesplot)
 options(mc.cores = 4, brms.backend = "cmdstanr")
+devtools::load_all()
 theme_set(theme_minimal())
+knitr::opts_chunk$set(echo = FALSE)
+
+hmc_iters <- 7000
+do_ppc_checks <- FALSE
 ```
 
 
@@ -77,6 +88,8 @@ stopifnot(nrow(sums_all_bad) == 0)
 
 ```
 
+## CD4
+
 ```{r}
 plot_prop <- function(all_prop, prop_col = prop_parent) {
   all_prop %>%
@@ -102,7 +115,7 @@ cd4_all_prop %>% filter(Level == "L2" & L2 != "Unconventional") %>% plot_prop(pr
 ```
 
 ```{r}
-cd4_all_prop %>% filter(Level == "L2" & L2 != "Unconventional") %>% 
+#cd4_all_prop %>% filter(Level == "L2" & L2 != "Unconventional") %>% 
   
 ```
 
@@ -112,17 +125,22 @@ cd4_all_prop %>% filter(Level == "L2" & L2 != "Unconventional") %>%
 cd4_all_prop %>% filter(Level == "L3") %>% plot_prop(prop_all)
 ```
 
+Samples with extreme proportions of ISAGhi:
+
 ```{r}
-cd4_all_prop %>% filter(Name == "ISAGhi" & prop_parent > 0.1)
+df_for_reading <- function(df) {
+  df %>% select(Patient_ID, Sample_ID, L2, L3, Condition, Experiment_ID, n, prop_parent, prop_all) %>% mutate(across(starts_with("prop"), scales::percent)) %>%
+    rename(Pat. = Patient_ID, Samp. = Sample_ID, Cond. = Condition, Exp = Experiment_ID, `% parent` = prop_parent, `% all` = prop_all)
+}
+
+cd4_all_prop %>% filter(Name == "ISAGhi" & prop_parent > 0.1) %>% df_for_reading() %>% select(-L3)
 ```
 
 
 ```{r}
-cd4_l3 <- cd4_all %>%
+cd4_l3 <- cd4_all_prop %>%
   filter(Level == "L3") %>%
-  select(-Level) %>%
-  mutate()
-
+  select(-Level) 
 ```
 
 
@@ -132,28 +150,165 @@ cd4_l3 %>% group_by(Sample_ID) %>%
   ggplot(aes(n_cells)) + geom_histogram(binwidth = 100)
 ```
 
-```{r}
-cd4_l3_for_model <- cd4_l3 %>% group_by(Sample_ID) %>%
-  mutate(n_all = sum(n), isT1 = as.numeric(Condition == "Dia T1"), isDia = as.numeric(Disease == "Dia"))
+## CD8
 
-fit_cd4 <- brm(bf(n ~ offset(-log(n_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
-                  shape ~ (1 | L3)), 
+```{r}
+cd8_all <-
+  read_csv(
+    here::here("private_data/all_levels_counts_cd8.csv"),
+    col_types = cols(
+      Sample_ID = col_character(),
+      annotations = col_character(),
+      n = col_integer(),
+      Condition = col_character(),
+      Condition2 = col_character(),
+      Disease = col_character(),
+      Sex = col_character(),
+      Age = col_double(),
+      Age_group = col_character(),
+      Patient_ID = col_integer(),
+      Time = col_character(),
+      Experiment_ID = col_character(),
+      Level = col_character()
+    )
+  ) %>%
+  separate(annotations, into = c("L1", "L2", "L3", "Marker_genes"), sep = "---|: ", fill = "right") %>%
+  mutate(Name = case_when(!is.na(L3) ~ L3,
+                          !is.na(L2) ~ L2,
+                          TRUE ~ L1))
+```
+
+
+```{r}
+cd8_all_prop <- cd8_all %>% 
+  group_by(Sample_ID, Level) %>%
+  mutate(sum_parent = if_else(Level == "L1", sum(n), NA_real_),
+         sum_all = sum(n)) %>%
+  group_by(Sample_ID, L1, Level) %>%
+  mutate(sum_parent = if_else(Level == "L2", sum(n), sum_parent)) %>%
+  group_by(Sample_ID, L1, L2, Level) %>%
+  mutate(sum_parent = if_else(Level == "L3", sum(n), sum_parent)) %>%
+  ungroup() %>%
+  mutate(prop_parent = n / sum_parent,
+         prop_all = n / sum_all,
+         parent_level = case_when(Level == "L1" ~ "All",
+                                  Level == "L2" ~ L1,
+                                  Level == "L3" ~ L2))
+
+stopifnot(all(!is.na(cd8_all_prop$sum_parent)))
+stopifnot(all(!is.na(cd8_all_prop$parent_level)))
+
+prop_sums_bad <- cd8_all_prop %>%
+  group_by(Sample_ID, Level, parent_level) %>%
+  summarise(prop_sum = sum(prop_parent), .groups = "drop") %>%
+  filter(abs(prop_sum - 1) > 1e-5)
+
+stopifnot(nrow(prop_sums_bad) == 0)
+
+sums_all_bad <- cd8_all_prop %>%
+  group_by(Sample_ID, sum_all) %>%
+  tally() %>%
+  group_by(Sample_ID) %>%
+  filter(n() > 1)
+
+stopifnot(nrow(sums_all_bad) == 0)
+
+
+```
+
+```{r}
+cd8_all_prop %>% filter(Level == "L1") %>% plot_prop()
+cd8_all_prop %>% filter(Level == "L2" & L2 != "NK cells") %>% plot_prop()
+```
+
+
+```{r, fig.width=8, fig.height=8}
+cd8_all_prop %>% filter(Level == "L3") %>% plot_prop()
+```
+
+Samples with extreme proportion of MAIT4:
+
+```{r}
+cd8_all_prop %>% filter(Name == "MAIT4", prop_parent > 0.3) %>% df_for_reading()
+```
+
+
+```{r}
+cd8_all_prop %>% filter(Level == "L1") %>% plot_prop(prop_all)
+cd8_all_prop %>% filter(Level == "L2" & L2 != "Unconventional") %>% plot_prop(prop_all)
+```
+
+
+
+
+```{r, fig.width=8, fig.height=8}
+cd8_all_prop %>% filter(Level == "L3") %>% plot_prop(prop_all)
+```
+
+```{r}
+cd8_l3 <- cd8_all_prop %>%
+  filter(Level == "L3") %>%
+  select(-Level) %>%
+  mutate()
+
+```
+
+
+```{r cells-per-sample-cd8, fig.cap="Distribution of cells per sample in the cd8 data"}
+cd8_l3 %>% group_by(Sample_ID) %>%
+  summarise(n_cells = sum(n)) %>%
+  ggplot(aes(n_cells)) + geom_histogram(binwidth = 100)
+```
+
+## Modelling
+
+### CD4 - outliers removed
+
+Those samples are claimed as outliers (proportion of the cells across the whole sample is 3 SD or more above the mean proportion across the given L3 population)
+
+```{r}
+remove_criteria <- function(x) {
+  return(x - mean(x) > 3 * sd(x))
+}
+
+
+cd4_l3_for_model_alldata <- cd4_l3 %>% 
+  mutate(isT1 = as.numeric(Condition == "Dia T1"), isDia = as.numeric(Disease == "Dia"))
+
+cd4_l3_for_model_alldata %>% group_by(L3) %>%
+  filter(remove_criteria(prop_all)) %>%
+  df_for_reading() %>%
+  arrange(L3)
+```
+
+
+```{r}
+
+
+cd4_l3_for_model <- cd4_l3_for_model_alldata %>% 
+  filter(!remove_criteria(prop_all))
+
+fit_cd4 <- brm(bf(n ~ offset(-log(sum_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
+                  shape ~ L2 + (1 | L3)), 
                data = cd4_l3_for_model, 
+               control = list(adapt_delta = 0.95),
+               iter = hmc_iters,
                family = negbinomial(),
                file = here::here("stored_fits/cd4.rds"),
                file_refit = "on_change")
 ```
 
-```{r}
-make_stancode(bf(n ~ offset(-log(n_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
-                  shape ~ (1 | L3)), 
-               data = cd4_l3_for_model, 
-               family = negbinomial())
 
-make_standata(bf(n ~ offset(-log(n_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
-                  shape ~ (1 | L3)), 
-               data = cd4_l3_for_model, 
-               family = negbinomial())$offsets
+```{r}
+# make_stancode(bf(n ~ offset(-log(n_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
+#                   shape ~ (1 | L3)), 
+#                data = cd4_l3_for_model, 
+#                family = negbinomial())
+# 
+# make_standata(bf(n ~ offset(-log(n_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
+#                   shape ~ (1 | L3)), 
+#                data = cd4_l3_for_model, 
+#                family = negbinomial())$offsets
 
 ```
 
@@ -163,59 +318,235 @@ fit_cd4
 ```
 
 ```{r}
-pp_check(fit_cd4, type = "loo_pit_overlay", nsamples = 50)
+#pp_check(fit_cd4, type = "loo_pit_overlay", ndraws = 50)
 ```
 
 ```{r}
-pred <- posterior_predict(fit_cd4)
-ppc_stat_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2, stat = "mean")
-ppc_stat_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2, stat = "sd")
-#ppc_bars_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2)
+if(do_ppc_checks) {
+  pred_cd4 <- posterior_predict(fit_cd4)
+  ppc_stat_grouped(cd4_l3_for_model$n, pred_cd4, group = cd4_l3_for_model$L2, stat = "mean")
+  ppc_stat_grouped(cd4_l3_for_model$n, pred_cd4, group = cd4_l3_for_model$L2, stat = "sd")
+  ppc_stat_grouped(cd4_l3_for_model$n, pred_cd4, group = cd4_l3_for_model$L2, stat = "phano")
+  ppc_stat_grouped(cd4_l3_for_model$n, pred_cd4, group = cd4_l3_for_model$L2, stat = "prop_zero")
+}
+
 ```
 
 ```{r}
-ppc_bars_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L3)
+if(do_ppc_checks) {
+  ppc_stat_grouped(cd4_l3_for_model$n, pred_cd4, group = cd4_l3_for_model$L3, stat = "mean")
+  ppc_stat_grouped(cd4_l3_for_model$n, pred_cd4, group = cd4_l3_for_model$L3, stat = "sd")
+  ppc_stat_grouped(cd4_l3_for_model$n, pred_cd4, group = cd4_l3_for_model$L3, stat = "phano")
+}
 ```
 
 
-```{r}
-pred <- prepare_predictions(fit_cd4)
-pred_shape <- get_dpar(pred, "shape")
-hist(log(pred_shape))
-mean(pred_shape < 1)
-qnbinom(0.975, size = 0.5, mu = 30)
-```
 
 ```{r}
 loo_cd4 <- loo(fit_cd4)
 ```
 
-```{r}
-cd4_l3_for_model[loo_cd4$diagnostics$pareto_k > 0.5,] %>% filter(L2 == "ISAGhi")
-```
+List of highly influential observations (for the fit after removing outliers mentioned above, i.e. those are potentially still outliers):
 
 ```{r}
-fit_cd4_pois <- brm(bf(n ~ offset(-log(n_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3) + (1 | gr(Sample_ID_L3, by = L3))), 
-               data = cd4_l3_for_model %>% mutate(Sample_ID_L3 = paste0(Sample_ID, L3, sep = "_")), 
-               family = poisson(),
-               refresh = 100,
-               file = here::here("stored_fits/cd4_pois.rds"),
+cd4_l3_for_model[loo_cd4$diagnostics$pareto_k > 0.5,] %>% df_for_reading()
+```
+
+
+
+### CD4 - full data
+
+```{r}
+
+fit_cd4_alldata <- brm(bf(n ~ offset(-log(sum_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
+                  shape ~ L2 + (1 | L3)), 
+               data = cd4_l3_for_model_alldata, 
+               control = list(adapt_delta = 0.95),
+               iter = hmc_iters,
+               family = negbinomial(),
+               file = here::here("stored_fits/cd4_alldata.rds"),
                file_refit = "on_change")
+```
 
-fit_cd4_pois
+
+```{r}
+fit_cd4_alldata
 ```
 
 ```{r}
-pp_check(fit_cd4_pois, type = "loo_pit_overlay", nsamples = 50)
-```
+if(do_ppc_checks) {
 
-```{r}
-pred <- posterior_predict(fit_cd4_pois)
-ppc_stat_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2, stat = "mean")
-ppc_stat_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2, stat = "sd")
+  pred_alldata <- posterior_predict(fit_cd4_alldata)
+  
+  ppc_stat_grouped(cd4_l3_for_model_alldata$n, pred_alldata, group = cd4_l3_for_model_alldata$L2, stat = "mean")
+  ppc_stat_grouped(cd4_l3_for_model_alldata$n, pred_alldata, group = cd4_l3_for_model_alldata$L2, stat = "sd")
+  ppc_stat_grouped(cd4_l3_for_model_alldata$n, pred_alldata, group = cd4_l3_for_model_alldata$L2, stat = "phano")
+  ppc_stat_grouped(cd4_l3_for_model_alldata$n, pred_alldata, group = cd4_l3_for_model_alldata$L2, stat = "prop_zero")
+}
 #ppc_bars_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L2)
 ```
+```{r}
+if(do_ppc_checks) {
+  ppc_stat_grouped(cd4_l3_for_model_alldata$n, pred, group = cd4_l3_for_model_alldata$L3, stat = "sd")
+  ppc_stat_grouped(cd4_l3_for_model_alldata$n, pred, group = cd4_l3_for_model_alldata$L3, stat = "phano")
+}
+```
+
+
+
+### CD8 - outliers removed
+
+The following are claimed as outliers:
 
 ```{r}
-ppc_bars_grouped(cd4_l3_for_model$n, pred, group = cd4_l3_for_model$L3)
+cd8_l3_for_model_alldata <- cd8_l3 %>% 
+  mutate(isT1 = as.numeric(Condition == "Dia T1"), isDia = as.numeric(Disease == "Dia"))
+
+
+cd8_l3_for_model_alldata %>% group_by(L3) %>%
+  filter(remove_criteria(prop_all)) %>%
+  df_for_reading() %>%
+  arrange(L3)
+
 ```
+
+
+```{r}
+
+cd8_l3_for_model <- cd8_l3_for_model_alldata %>% 
+  filter(!remove_criteria(prop_all))
+
+fit_cd8 <- brm(bf(n ~ offset(-log(sum_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
+                  shape ~ L2 + (1 | L3)), 
+               data = cd8_l3_for_model, 
+               family = negbinomial(),
+               control = list(adapt_delta = 0.95),
+               iter = hmc_iters,
+               file = here::here("stored_fits/cd8.rds"),
+               file_refit = "on_change")
+```
+
+
+```{r}
+fit_cd8
+```
+
+```{r}
+#pp_check(fit_cd8, type = "loo_pit_overlay", ndraws = 50)
+```
+
+```{r}
+if(do_ppc_checks) {
+  pred_cd8 <- posterior_predict(fit_cd8)
+  
+  ppc_stat_grouped(cd8_l3_for_model$n, pred_cd8, group = cd8_l3_for_model$L2, stat = "mean")
+  ppc_stat_grouped(cd8_l3_for_model$n, pred_cd8, group = cd8_l3_for_model$L2, stat = "sd")
+  ppc_stat_grouped(cd8_l3_for_model$n, pred_cd8, group = cd8_l3_for_model$L2, stat = "phano")
+  ppc_stat_grouped(cd8_l3_for_model$n, pred_cd8, group = cd8_l3_for_model$L2, stat = "prop_zero")
+}
+```
+```{r}
+if(do_ppc_checks) {
+  ppc_stat_grouped(cd8_l3_for_model$n, pred_cd8, group = cd8_l3_for_model$L3, stat = "mean")
+  ppc_stat_grouped(cd8_l3_for_model$n, pred_cd8, group = cd8_l3_for_model$L3, stat = "sd")
+  ppc_stat_grouped(cd8_l3_for_model$n, pred_cd8, group = cd8_l3_for_model$L3, stat = "phano")
+}
+```
+
+
+
+```{r}
+loo_cd8 <- loo(fit_cd8)
+```
+
+List of highly influential observation (with outliers removed, i.e. potential extra outliers)
+
+```{r}
+cd8_l3_for_model[loo_cd8$diagnostics$pareto_k > 0.5,] %>% df_for_reading()
+```
+
+
+
+### CD8 - full data
+
+```{r}
+
+fit_cd8_alldata <- brm(bf(n ~ offset(-log(sum_all / 1000)) + isDia + isT1 + L3 + (0 + isDia + isT1 | L2) + (0 + isDia + isT1 | L3), 
+                  shape ~ L2 + (1 | L3)), 
+               data = cd8_l3_for_model_alldata, 
+               control = list(adapt_delta = 0.95),
+               iter = hmc_iters,
+               family = negbinomial(),
+               file = here::here("stored_fits/cd8_alldata.rds"),
+               file_refit = "on_change")
+```
+
+
+```{r}
+fit_cd8_alldata
+```
+
+
+
+```{r}
+#pp_check(fit_cd8_alldata, type = "loo_pit_overlay", ndraws = 50)
+```
+
+```{r}
+if(do_ppc_checks) {
+
+  pred_alldata <- posterior_predict(fit_cd8_alldata)
+  
+  ppc_stat_grouped(cd8_l3_for_model_alldata$n, pred_alldata, group = cd8_l3_for_model_alldata$L2, stat = "mean")
+  ppc_stat_grouped(cd8_l3_for_model_alldata$n, pred_alldata, group = cd8_l3_for_model_alldata$L2, stat = "sd")
+  ppc_stat_grouped(cd8_l3_for_model_alldata$n, pred_alldata, group = cd8_l3_for_model_alldata$L2, stat = "phano")
+  ppc_stat_grouped(cd8_l3_for_model_alldata$n, pred_alldata, group = cd8_l3_for_model_alldata$L2, stat = "prop_zero")
+  
+  #ppc_bars_grouped(cd8_l3_for_model$n, pred, group = cd8_l3_for_model$L2)
+}
+```
+```{r}
+if(do_ppc_checks) {
+  ppc_stat_grouped(cd8_l3_for_model_alldata$n, pred_alldata, group = cd8_l3_for_model_alldata$L3, stat = "sd")
+  ppc_stat_grouped(cd8_l3_for_model_alldata$n, pred_alldata, group = cd8_l3_for_model_alldata$L3, stat = "phano")
+}
+```
+
+
+### Associations summary
+
+In all cases, the isDia estimates show the difference (fold change in abundance) between healthy controls and diabetics at time 0 (fold change > 1 means higher abundance in diabetics). The isT1 estimates are the difference for diabetics between time 1 and and time 0 (fold change > 1 means higher abundance at time 1).
+
+We look separately at L2 populations relative to total, L3 populations relative to parent population and then at the combined estimate - L3 populations relative to total.
+
+Finally we look at the dataset with outliers removed (proportion relative to total is 3SD or more above others) and the full dataset without any removals.
+
+```{r, fig.height=2.8, fig.width=6}
+plot_population_effects(get_l2_draws(fit_cd4), "CD4 - L2 relative to total")
+plot_population_effects(get_l2_draws(fit_cd4_alldata), "CD4 - L2 relative to total, no removals")
+```
+
+```{r, fig.width=8, fig.height=7}
+plot_population_effects(get_l3_draws(fit_cd4), "CD4 - L3 relative to parent")
+plot_population_effects(get_l3_draws(fit_cd4_alldata), "CD4 - L3 relative to parent, no removals")
+
+plot_population_effects(get_combined_draws(fit_cd4, cd4_l3_for_model), "CD4 - L3 relative to total (combined)")
+plot_population_effects(get_combined_draws(fit_cd4_alldata, cd4_l3_for_model_alldata), "CD4 - L3 relative to total (combined), no removals")
+```
+
+
+
+```{r, fig.height=2.5, fig.width=6}
+plot_population_effects(get_l2_draws(fit_cd8), "CD8 - L2 relative to total")
+plot_population_effects(get_l2_draws(fit_cd8_alldata), "CD8 - L2 relative to total, no removals")
+```
+```{r, fig.width=8, fig.height=7.5}
+plot_population_effects(get_l3_draws(fit_cd8), "CD8 - L3 relative to parent")
+plot_population_effects(get_l3_draws(fit_cd8_alldata), "CD8 - L3 relative to parent, no removals")
+
+plot_population_effects(get_combined_draws(fit_cd8, cd8_l3_for_model), "CD8 -  L3 relative to total (combined)")
+plot_population_effects(get_combined_draws(fit_cd8_alldata, cd8_l3_for_model_alldata), "CD8 -  L3 relative to total (combined), no removals")
+```
+
+
+

@@ -1,0 +1,4 @@
+^renv$
+^renv\.lock$
+^2024_niederlova_diabetes\.Rproj$
+^\.Rproj\.user$

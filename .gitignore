@@ -49,7 +49,9 @@ Thumbs.db
 *.wmv
 
 .Rproj.user
+.Rhistory
 
 private_data/
+stored_fits/
 *.nb.html
 *.exe
