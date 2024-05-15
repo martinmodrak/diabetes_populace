@@ -5,3 +5,4 @@ phano <- function(x) {
 prop_zero <- function(x) {
   mean(x == 0)
 }
+
