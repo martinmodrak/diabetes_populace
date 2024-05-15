@@ -13,6 +13,7 @@ date: "Version `r format(Sys.time(), '%Y-%m-%d')`"
 ```{r setup, echo=FALSE, include=FALSE}
 library(tidyverse)
 library(brms)
+library(rstanarm)
 library(bayesplot)
 options(mc.cores = 4, brms.backend = "cmdstanr")
 devtools::load_all()
@@ -22,6 +23,11 @@ knitr::opts_chunk$set(echo = FALSE)
 hmc_iters <- 7000
 do_ppc_checks <- FALSE
 do_loo <- FALSE
+
+calibration_cache_dir <- here::here("local_temp_data")
+if(!dir.exists(calibration_cache_dir)) {
+  dir.create(calibration_cache_dir)
+}
 ```
 
 
@@ -230,19 +236,10 @@ cd4_preliminary_comparison_l2 %>%
 ```
 
 ```{r}
-cd4_preliminary_comparison_l2 %>%
-  ggplot(aes(x = L2, y = perturbation_change, color = Condition)) + 
-  geom_hline(yintercept = 1/length(unique(cd4_preliminary_comparison_l2$L2)), color = "orangered") +
-  geom_point(position = position_jitter(width = 0.1), alpha = 0.8) +
-  scale_y_log10() + coord_flip()
-```
-
-```{r}
 cd4_preliminary_comparison_l3 <- cd4_preliminary_comparison %>% 
   filter(Level == "L3") %>%
   group_by(Patient_ID, Condition) %>%
-  mutate(fold_change = ((n_final + 1) / sum_all_final) /   ((n_preliminary + 1) / sum_all_preliminary),
-         perturbation_change = fold_change / sum(fold_change))
+  mutate(fold_change = ((n_final + 1) / sum_all_final) /   ((n_preliminary + 1) / sum_all_preliminary))
 
 cd4_preliminary_comparison_l3 %>%
   ggplot(aes(x = L3, y = fold_change, color = Condition)) + 
@@ -254,132 +251,49 @@ cd4_preliminary_comparison_l3 %>%
 ```
 
 ```{r}
-cd4_preliminary_comparison_l3 %>%
-  ggplot(aes(x = L3, y = perturbation_change, color = Condition)) + 
-  geom_hline(yintercept = 1/length(unique(cd4_preliminary_comparison_l3$L3)), color = "orangered") +
-  geom_point(position = position_jitter(width = 0.1), alpha = 0.8) +
-  scale_y_log10() + coord_flip()
+cd4_calibration_dfs_L2 <- calibration_df_all(cd4_all_prop_with_preliminary, "L2", calibration_cache_dir)
 ```
-
-```{r}
-# cd4_all_prop_with_preliminary %>% group_by(Patient_ID, Condition, isPreliminary) %>% summarise(n_samps = length(unique(Sample_ID))) %>%
-#   filter(n_samps > 1)
-# 
-# cd4_all_prop_with_preliminary %>% group_by(Sample_ID) %>% summarise(n_samps = length(unique(paste0(Patient_ID, Condition, isPreliminary, sep = "___")))) %>%
-#   filter(n_samps > 1)
-
-
-cd4_for_calibration_model <- cd4_all_prop_with_preliminary %>%
-  mutate(PatientDesc = paste(Patient_ID, Condition, sep = "___"),
-         isFinal = as.numeric(!isPreliminary)) %>%
-  group_by(PatientDesc) %>%
-  filter(any(isPreliminary)) %>%
-  ungroup() 
-
-# fit_cd4_calibration <- brm(bf(n ~ offset(-log(sum_all / 1000)) + PatientDesc*L3 + isFinal * L3, 
-#                   shape ~ L2 + (1 | L3)), 
-#                data = cd4_for_calibration_model, 
-#                control = list(adapt_delta = 0.95),
-#                family = negbinomial(),
-#                file = here::here("stored_fits/cd4_calibration.rds"),
-#                file_refit = "on_change")
+```{r,fig.width=8,fig.height=8}
+calibration_plot(cd4_calibration_dfs_L2$df,cd4_calibration_dfs_L2$fc_df)
 ```
 
 
 ```{r}
-cd4_test <- cd4_for_calibration_model %>% filter(L3 == "Naive1", Level == "L3") %>% 
-  uncertainty_fold_change_group()
+fc_plot(cd4_calibration_dfs_L2$fc_df)
+```
+
+```{r}
+cd4_calibration_dfs_L3 <- calibration_df_all(cd4_all_prop_with_preliminary, "L3", calibration_cache_dir)
+```
+
+```{r}
+cd4_calibration_dfs_L3 <- calibration_df_all(cd4_all_prop_with_preliminary, "L3", calibration_cache_dir)
+```
+
+
+```{r,fig.width=8,fig.height=8}
+calibration_plot(cd4_calibration_dfs_L3$df,cd4_calibration_dfs_L3$fc_df)
 ```
 
 
 ```{r}
-#cd4_test <- cd4_for_calibration_model %>% filter(L2 == "Unconventional", Level == "L2")
-cd4_test <- cd4_for_calibration_model %>% filter(L3 == "Naive1", Level == "L3")
-cd4_test <- cd4_test %>% mutate(AgeStd = (10 - Age)/5)
-fit_calibration <- MASS::glm.nb(n ~ offset(-log(sum_all / 1000)) + PatientDesc + isFinal, data = cd4_test)
-plot(fit_calibration)
-confint(fit_calibration)
-fit_calibration$theta
-fit_calibration$SE.theta
-
-cd4_test %>% mutate(fitted = fitted(fit_calibration), residuals = residuals(fit_calibration)) %>%
-  ggplot(aes(x = fitted, y = residuals, group = PatientDesc))  + geom_line() + geom_point(aes(color = as.factor(isFinal))) + scale_x_log10()
-
-cd4_test %>% mutate(fitted = log(fitted(fit_calibration)), residuals = residuals(fit_calibration)) %>%
-  ggplot(aes(x = fitted, y = log(n) - log(sum_all / 1000), group = PatientDesc))  + geom_abline(slope = 1, intercept = 0, color = "lightblue", linewidth = 2) + geom_line() + geom_point(aes(color = as.factor(isFinal))) 
-
-
-cd4_test %>% mutate(fitted = log(fitted(fit_calibration)), residuals = residuals(fit_calibration)) %>%
-  filter(Condition == "Ctrl T0") %>%
-  ggplot(aes(x = fitted, y = log(n) - log(sum_all / 1000), group = PatientDesc))  + geom_abline(slope = 1, intercept = 0, color = "lightblue", linewidth = 2) + geom_line(aes(color = PatientDesc)) #+ geom_point(aes(color = as.factor(isFinal))) 
-
+fc_plot(cd4_calibration_dfs_L3$fc_df)
 ```
 
 ```{r}
-cd4_test %>% mutate(fitted = log(fitted(fit_calibration)), residuals = residuals(fit_calibration)) %>%
-  filter(Condition == "Ctrl T0")
-```
-
-```{r}
-library(rstanarm)
-stan_test <- rstanarm::stan_glm.nb(n ~ offset(-log(sum_all / 1000)) + PatientDesc + isFinal + isFinal:Condition + isFinal:AgeStd, data = cd4_test)
-
-stan_test_df <- tidybayes::add_predicted_rvars(cd4_test, stan_test, offset = -log(cd4_test$sum_all / 1000)) %>%
-  mutate(pred_ratio = (.prediction +  1) / sum_all) %>%
-  select(n, Condition, sum_all, isPreliminary, PatientDesc, Sample_ID, Patient_ID, pred_ratio)  %>%
-  mutate(isPreliminary = if_else(isPreliminary, "preliminary", "final")) %>%
-  pivot_wider(names_from = isPreliminary, values_from = c("Sample_ID", "n", "sum_all", "pred_ratio")) %>%
-  mutate(fold_change = ((n_final + 1) / sum_all_final) /   ((n_preliminary + 1) / sum_all_preliminary),
-         fc_rvar = pred_ratio_final / pred_ratio_preliminary,
-         low = as.numeric(quantile(fc_rvar, 0.025)), 
-         high = as.numeric(quantile(fc_rvar, 0.975)))
-
-stan_test_df %>%
-  ggplot(aes(x = PatientDesc, y = fold_change, color = Condition)) + 
-  geom_hline(yintercept = exp(fit_calibration$coefficients["isFinal"]), color = "blue") +
-  geom_hline(yintercept = 1, color = "orangered") +
-  geom_linerange(aes(ymin = low, ymax = high), alpha = 0.8) +
-  geom_point(alpha = 0.8) +
-  scale_y_log10() + coord_flip()
-```
-
-```{r}
-summary(stan_test)
-stan_test_df %>% filter(Patient_ID == 209) %>% pull(pred_ratio_preliminary) %>% posterior::draws_of() %>% hist()
-stan_test_df %>% filter(Patient_ID == 209) %>% pull(pred_ratio_final) %>% posterior::draws_of() %>% hist()
-
-stan_test %>% posterior::as_draws_rvars() %>% posterior::variables()
-hist(1 / (stan_test %>% posterior::as_draws_rvars())$reciprocal_dispersion %>% posterior::draws_of())
-```
-
-
-```{r}
-cc <- coefficients(fit_calibration)
-base <- cc["(Intercept)"] + cc["PatientDesc209___Ctrl T0"]
-base_f <- base + cc["isFinal"]
-exp(base) / 1000
-exp(base_f) / 1000
-uncertainty_fold_change_single(5.942,1316, 5.759, 611, fit_calibration$theta, fit_calibration$SE.theta)
-```
-
-
-```{r}
-hist(fold_change_with_uncertainty$sum_all_final / fold_change_with_uncertainty$sum_all_preliminary)
-```
-
-
-```{r}
-cd4_test
+cd4_all_prop_with_preliminary %>% select(Condition, Age) %>% distinct()
 ```
 
 
 ## CD8
 
 ```{r}
-cd8_all <-
+cd8_all_with_preliminary <-
   read_csv(
-    here::here("private_data/all_levels_counts_cd8.csv"),
+    #here::here("private_data/all_levels_counts_cd8.csv"),
+    here::here("private_data/all_levels_counts_with_preliminary_cd8.csv"),
     col_types = cols(
+      ...1 = col_skip(),
       Sample_ID = col_character(),
       annotations = col_character(),
       n = col_integer(),
@@ -393,17 +307,20 @@ cd8_all <-
       Time = col_character(),
       Experiment_ID = col_character(),
       Level = col_character()
-    )
+    ) 
   ) %>%
   separate(annotations, into = c("L1", "L2", "L3", "Marker_genes"), sep = "---|: ", fill = "right") %>%
   mutate(Name = case_when(!is.na(L3) ~ L3,
                           !is.na(L2) ~ L2,
-                          TRUE ~ L1))
+                          TRUE ~ L1),
+         isPreliminary = Experiment_ID %in% c("Exp08", "Exp10", "Exp11"))
+
+cd8_all <- cd8_all_with_preliminary %>% filter(!isPreliminary) %>% select(-isPreliminary)
 ```
 
 
 ```{r}
-cd8_all_prop <- cd8_all %>% 
+cd8_all_prop_with_preliminary <- cd8_all_with_preliminary %>% 
   group_by(Sample_ID, Level) %>%
   mutate(sum_parent = if_else(Level == "L1", sum(n), NA_real_),
          sum_all = sum(n)) %>%
@@ -418,17 +335,17 @@ cd8_all_prop <- cd8_all %>%
                                   Level == "L2" ~ L1,
                                   Level == "L3" ~ L2))
 
-stopifnot(all(!is.na(cd8_all_prop$sum_parent)))
-stopifnot(all(!is.na(cd8_all_prop$parent_level)))
+stopifnot(all(!is.na(cd8_all_prop_with_preliminary$sum_parent)))
+stopifnot(all(!is.na(cd8_all_prop_with_preliminary$parent_level)))
 
-prop_sums_bad <- cd8_all_prop %>%
+prop_sums_bad <- cd8_all_prop_with_preliminary %>%
   group_by(Sample_ID, Level, parent_level) %>%
   summarise(prop_sum = sum(prop_parent), .groups = "drop") %>%
   filter(abs(prop_sum - 1) > 1e-5)
 
 stopifnot(nrow(prop_sums_bad) == 0)
 
-sums_all_bad <- cd8_all_prop %>%
+sums_all_bad <- cd8_all_prop_with_preliminary %>%
   group_by(Sample_ID, sum_all) %>%
   tally() %>%
   group_by(Sample_ID) %>%
@@ -436,8 +353,10 @@ sums_all_bad <- cd8_all_prop %>%
 
 stopifnot(nrow(sums_all_bad) == 0)
 
+cd8_all_prop <- cd8_all_prop_with_preliminary %>% filter(!isPreliminary) %>% select(-isPreliminary)
 
 ```
+
 
 ```{r}
 cd8_all_prop %>% filter(Level == "L1") %>% plot_prop()
@@ -482,6 +401,88 @@ cd8_l3 %>% group_by(Sample_ID) %>%
   summarise(n_cells = sum(n)) %>%
   ggplot(aes(n_cells)) + geom_histogram(binwidth = 100)
 ```
+
+### Recalibrating the naive population
+
+```{r}
+cd8_preliminary_comparison <- cd8_all_prop_with_preliminary %>% 
+  mutate(isPreliminary = if_else(isPreliminary, "preliminary", "final")) %>%
+  pivot_wider(names_from = isPreliminary, values_from = c("Sample_ID", "Experiment_ID", "n", "sum_parent", "sum_all", "prop_parent", "prop_all")) %>%
+  filter(!is.na(Sample_ID_preliminary))
+
+stopifnot(!any(is.na(cd8_preliminary_comparison$Sample_ID_final)))
+#stopifnot(length(unique(cd8_preliminary_comparison$Patient_ID)) == 9)
+```
+
+```{r}
+cd8_preliminary_comparison %>% filter(Level == "L2") %>%
+  mutate(group = if_else(L2 == "Naive", "Naive", "Other")) %>%
+  ggplot(aes(x = prop_all_preliminary, y = prop_all_final)) + 
+  geom_smooth(method = "lm", formula = y ~ x) + 
+  geom_point(aes(color = L2)) +
+  facet_wrap(~group, scale = "free")
+
+```
+
+```{r}
+cd8_preliminary_comparison_l2 <- cd8_preliminary_comparison %>% 
+  filter(Level == "L2") %>%
+  group_by(Patient_ID, Condition) %>%
+  mutate(fold_change = ((n_final + 1) / sum_all_final) /   ((n_preliminary + 1) / sum_all_preliminary),
+         perturbation_change = fold_change / sum(fold_change)
+         #alr_perturbation_change = log(perturbation_change / perturbation_change[L2 == "Naive"]),
+         #clr_perturbation_change = log(perturbation_change / exp(mean(log(perturbation_change))))
+         )
+
+cd8_preliminary_comparison_l2 %>%
+  ggplot(aes(x = L2, y = fold_change, color = Condition)) + 
+  geom_hline(yintercept = 1, color = "orangered") +
+  geom_point(position = position_jitter(width = 0.1), alpha = 0.8) +
+  scale_y_log10() + coord_flip()
+```
+
+```{r}
+cd8_preliminary_comparison_l3 <- cd8_preliminary_comparison %>% 
+  filter(Level == "L3") %>%
+  group_by(Patient_ID, Condition) %>%
+  mutate(fold_change = ((n_final + 1) / sum_all_final) /   ((n_preliminary + 1) / sum_all_preliminary))
+
+cd8_preliminary_comparison_l3 %>%
+  ggplot(aes(x = L3, y = fold_change, color = Condition)) + 
+  geom_hline(yintercept = 1, color = "orangered") +
+  geom_point(position = position_jitter(width = 0.1), alpha = 0.8) +
+  scale_y_log10()  + coord_flip()
+
+
+```
+
+```{r}
+cd8_calibration_dfs_L2 <- calibration_df_all(cd8_all_prop_with_preliminary, "L2", calibration_cache_dir)
+```
+```{r,fig.width=8,fig.height=8}
+calibration_plot(cd8_calibration_dfs_L2$df,cd8_calibration_dfs_L2$fc_df)
+```
+
+
+```{r}
+fc_plot(cd8_calibration_dfs_L2$fc_df)
+```
+
+```{r}
+#cd8_calibration_dfs_L3 <- calibration_df_all(cd8_all_prop_with_preliminary, "L3", calibration_cache_dir)
+```
+
+
+
+```{r,fig.width=8,fig.height=8}
+#calibration_plot(cd8_calibration_dfs_L3$df,cd8_calibration_dfs_L3$fc_df)
+```
+
+
+```{r}
+#fc_plot(cd8_calibration_dfs_L3$fc_df)
+```
+
 
 ## Modelling
 

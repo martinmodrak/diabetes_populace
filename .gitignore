@@ -52,6 +52,7 @@ Thumbs.db
 .Rhistory
 
 private_data/
+local_temp_data/
 stored_fits/
 *.nb.html
 *.exe
