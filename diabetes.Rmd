@@ -199,14 +199,11 @@ cd4_l3 %>% group_by(Sample_ID) %>%
 ### Recalibrating the naive population
 
 ```{r}
-cd4_preliminary_comparison <- cd4_all_prop_with_preliminary %>% 
-  mutate(isPreliminary = if_else(isPreliminary, "preliminary", "final")) %>%
-  pivot_wider(names_from = isPreliminary, values_from = c("Sample_ID", "Experiment_ID", "n", "sum_parent", "sum_all", "prop_parent", "prop_all")) %>%
-  filter(!is.na(Sample_ID_preliminary))
-
-stopifnot(!any(is.na(cd4_preliminary_comparison$Sample_ID_final)))
-#stopifnot(length(unique(cd4_preliminary_comparison$Patient_ID)) == 9)
+cd4_preliminary_comparison <- compute_preliminary_comparison(cd4_all_prop_with_preliminary)
 ```
+
+Here we see the proportions in preliminary and final - each dot is a single population in a single patient.
+blue line is a fitted linear trend.
 
 ```{r}
 cd4_preliminary_comparison %>% filter(Level == "L2") %>%
@@ -218,45 +215,41 @@ cd4_preliminary_comparison %>% filter(Level == "L2") %>%
 
 ```
 
-```{r}
-cd4_preliminary_comparison_l2 <- cd4_preliminary_comparison %>% 
-  filter(Level == "L2") %>%
-  group_by(Patient_ID, Condition) %>%
-  mutate(fold_change = ((n_final + 1) / sum_all_final) /   ((n_preliminary + 1) / sum_all_preliminary),
-         perturbation_change = fold_change / sum(fold_change)
-         #alr_perturbation_change = log(perturbation_change / perturbation_change[L2 == "Naive"]),
-         #clr_perturbation_change = log(perturbation_change / exp(mean(log(perturbation_change))))
-         )
+#### Observed fold changes
 
-cd4_preliminary_comparison_l2 %>%
-  ggplot(aes(x = L2, y = fold_change, color = Condition)) + 
-  geom_hline(yintercept = 1, color = "orangered") +
-  geom_point(position = position_jitter(width = 0.1), alpha = 0.8) +
-  scale_y_log10() + coord_flip()
-```
+Each dot is a single patient and shows the fold change of the proportion in the specific population (we add 1 to each population cell count to avoid divsion by zero).
+Larger dots are mean + SE (for the logarithm).
 
 ```{r}
-cd4_preliminary_comparison_l3 <- cd4_preliminary_comparison %>% 
-  filter(Level == "L3") %>%
-  group_by(Patient_ID, Condition) %>%
-  mutate(fold_change = ((n_final + 1) / sum_all_final) /   ((n_preliminary + 1) / sum_all_preliminary))
-
-cd4_preliminary_comparison_l3 %>%
-  ggplot(aes(x = L3, y = fold_change, color = Condition)) + 
-  geom_hline(yintercept = 1, color = "orangered") +
-  geom_point(position = position_jitter(width = 0.1), alpha = 0.8) +
-  scale_y_log10()  + coord_flip()
-
-
+plot_preliminary_comparison(cd4_preliminary_comparison, "L2")
 ```
+
+The same in L3:
 
 ```{r}
-cd4_calibration_dfs_L2 <- calibration_df_all(cd4_all_prop_with_preliminary, "L2", calibration_cache_dir)
+plot_preliminary_comparison(cd4_preliminary_comparison, "L3")
 ```
-```{r,fig.width=8,fig.height=8}
+
+Age is substantially confounded with condition:
+
+```{r}
+cd4_preliminary_comparison %>% select(Patient_ID, Age, Condition) %>% distinct() %>%
+  ggplot(aes(x = Age, y = Condition)) + geom_jitter(height = 0.3, width = 0)
+```
+
+
+```{r}
+cd4_calibration_dfs_L2 <- calibration_df_all(cd4_all_prop_with_preliminary, "L2", calibration_cache_dir, include_age = FALSE)
+```
+
+This is a bit of a messy plot: here we show for each patient the observed fold change (dots) compared to the prediction interval for fold change predicted by the
+fitted model (horizontal lines). Vertical lines + the shaded region show the estimates and posterior uncertainty for the overall fold change in the control and diabetic groups...
+
+```{r,fig.width=10,fig.height=8}
 calibration_plot(cd4_calibration_dfs_L2$df,cd4_calibration_dfs_L2$fc_df)
 ```
 
+A simpler plot just showing the overall model estimates
 
 ```{r}
 fc_plot(cd4_calibration_dfs_L2$fc_df)
@@ -266,12 +259,7 @@ fc_plot(cd4_calibration_dfs_L2$fc_df)
 cd4_calibration_dfs_L3 <- calibration_df_all(cd4_all_prop_with_preliminary, "L3", calibration_cache_dir)
 ```
 
-```{r}
-cd4_calibration_dfs_L3 <- calibration_df_all(cd4_all_prop_with_preliminary, "L3", calibration_cache_dir)
-```
-
-
-```{r,fig.width=8,fig.height=8}
+```{r,fig.width=12,fig.height=12}
 calibration_plot(cd4_calibration_dfs_L3$df,cd4_calibration_dfs_L3$fc_df)
 ```
 
@@ -404,14 +392,10 @@ cd8_l3 %>% group_by(Sample_ID) %>%
 
 ### Recalibrating the naive population
 
-```{r}
-cd8_preliminary_comparison <- cd8_all_prop_with_preliminary %>% 
-  mutate(isPreliminary = if_else(isPreliminary, "preliminary", "final")) %>%
-  pivot_wider(names_from = isPreliminary, values_from = c("Sample_ID", "Experiment_ID", "n", "sum_parent", "sum_all", "prop_parent", "prop_all")) %>%
-  filter(!is.na(Sample_ID_preliminary))
+Plot descriptions to be found in the CD4 section of the same name
 
-stopifnot(!any(is.na(cd8_preliminary_comparison$Sample_ID_final)))
-#stopifnot(length(unique(cd8_preliminary_comparison$Patient_ID)) == 9)
+```{r}
+cd8_preliminary_comparison <- compute_preliminary_comparison(cd8_all_prop_with_preliminary)
 ```
 
 ```{r}
@@ -425,62 +409,89 @@ cd8_preliminary_comparison %>% filter(Level == "L2") %>%
 ```
 
 ```{r}
-cd8_preliminary_comparison_l2 <- cd8_preliminary_comparison %>% 
-  filter(Level == "L2") %>%
-  group_by(Patient_ID, Condition) %>%
-  mutate(fold_change = ((n_final + 1) / sum_all_final) /   ((n_preliminary + 1) / sum_all_preliminary),
-         perturbation_change = fold_change / sum(fold_change)
-         #alr_perturbation_change = log(perturbation_change / perturbation_change[L2 == "Naive"]),
-         #clr_perturbation_change = log(perturbation_change / exp(mean(log(perturbation_change))))
-         )
-
-cd8_preliminary_comparison_l2 %>%
-  ggplot(aes(x = L2, y = fold_change, color = Condition)) + 
-  geom_hline(yintercept = 1, color = "orangered") +
-  geom_point(position = position_jitter(width = 0.1), alpha = 0.8) +
-  scale_y_log10() + coord_flip()
+plot_preliminary_comparison(cd8_preliminary_comparison, "L2")
 ```
 
+
 ```{r}
-cd8_preliminary_comparison_l3 <- cd8_preliminary_comparison %>% 
-  filter(Level == "L3") %>%
-  group_by(Patient_ID, Condition) %>%
-  mutate(fold_change = ((n_final + 1) / sum_all_final) /   ((n_preliminary + 1) / sum_all_preliminary))
-
-cd8_preliminary_comparison_l3 %>%
-  ggplot(aes(x = L3, y = fold_change, color = Condition)) + 
-  geom_hline(yintercept = 1, color = "orangered") +
-  geom_point(position = position_jitter(width = 0.1), alpha = 0.8) +
-  scale_y_log10()  + coord_flip()
-
-
+plot_preliminary_comparison(cd8_preliminary_comparison, "L3")
 ```
 
+
 ```{r}
-cd8_calibration_dfs_L2 <- calibration_df_all(cd8_all_prop_with_preliminary, "L2", calibration_cache_dir)
+cd8_calibration_dfs_L2 <- calibration_df_all(cd8_all_prop_with_preliminary, "L2", calibration_cache_dir, include_age = FALSE)
 ```
 ```{r,fig.width=8,fig.height=8}
 calibration_plot(cd8_calibration_dfs_L2$df,cd8_calibration_dfs_L2$fc_df)
 ```
 
-
 ```{r}
 fc_plot(cd8_calibration_dfs_L2$fc_df)
+fc_plot(cd8_calibration_dfs_L2$fc_df, renorm = TRUE)
 ```
 
 ```{r}
-#cd8_calibration_dfs_L3 <- calibration_df_all(cd8_all_prop_with_preliminary, "L3", calibration_cache_dir)
+cd8_fits <- calibration_fit_all(cd8_all_prop_with_preliminary, "L2", calibration_cache_dir, include_age = FALSE)
+```
+
+```{r, include = FALSE}
+fit <- cd8_fits[[8]]
+pred <- posterior_predict(fit)
+ppc_dens_overlay(log(fit$data$n + 1), log(pred[1:100,] + 1))
+pp_check(fit, plotfun = "stat", stat = \(x) log(sd(x)))
+pp_check(fit, plotfun = "stat_grouped", stat = \(x) log(mean(x + 1)), group = "PatientDesc")
+
+ppc_stat_grouped(fit$data$n, pred, stat = \(x) log(mean(x+1)), group = paste0(fit$data$PatientDesc, fit$data$isPreliminary) )
+
+summary(fit)
+
+
+```
+
+
+```{r, include=FALSE}
+rvars_fit <- as_draws_rvars(fit)
+PatientDesc <- "104___Dia T0"
+prelim <- fit$data %>% filter(PatientDesc == !!PatientDesc, isPreliminary)
+final <- fit$data %>% filter(PatientDesc == !!PatientDesc, !isPreliminary)
+
+intercept <- ifelse(is.null(rvars_fit$`(Intercept)`), 0, 1)
+
+prelim_pred <- exp(intercept + rvars_fit[[paste0("PatientDesc", PatientDesc)]] - log(prelim$sum_all/1000))
+prelim_pred
+prelim$n
+
+if(prelim$Condition == "Ctrl T0") {
+  condition = 0
+} else {
+  condition <- rvars_fit$`isFinal:ConditionDia T0`
+}
+
+
+# final_pred <- exp(intercept + rvars_fit[[paste0("PatientDesc", PatientDesc)]] - log(final$sum_all/1000)) + rvars_fit$isFinal + condition 
+# final_pred
+# final$n
+# 
+# 
+# ((final$n) / final$sum_all) / (prelim$n / prelim$sum_all)
+# (final_pred / final$sum_all) / (prelim_pred / prelim$sum_all)
+# exp(rvars_fit$isFinal)
+```
+
+
+```{r}
+cd8_calibration_dfs_L3 <- calibration_df_all(cd8_all_prop_with_preliminary, "L3", calibration_cache_dir)
 ```
 
 
 
 ```{r,fig.width=8,fig.height=8}
-#calibration_plot(cd8_calibration_dfs_L3$df,cd8_calibration_dfs_L3$fc_df)
+calibration_plot(cd8_calibration_dfs_L3$df,cd8_calibration_dfs_L3$fc_df)
 ```
 
 
 ```{r}
-#fc_plot(cd8_calibration_dfs_L3$fc_df)
+fc_plot(cd8_calibration_dfs_L3$fc_df)
 ```
 
 

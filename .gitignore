@@ -56,3 +56,5 @@ local_temp_data/
 stored_fits/
 *.nb.html
 *.exe
+
+*.docx
