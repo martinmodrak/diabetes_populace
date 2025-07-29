@@ -1,8 +1,7 @@
 # Populations of cells and diabetes
 
-Detailed notes at https://docs.google.com/document/d/1CdOEOm-pe5ZUYJBfLKXbomp2DvEIbrHDdT6CzxYc52M/edit
 
-# Goals
+## Goals
 
 Correlation of cell population abundance and treatment groups (control, patients at the time of diabetes diagnosis, patients 1 year after diagnosis.)
 
